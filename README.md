@@ -1,6 +1,6 @@
 # SSE-based Server and Client for [MCP](https://modelcontextprotocol.io/introduction)
 
-[![smithery badge](https://smithery.ai/badge/@sidharthrajaram/mcp-sse)](https://smithery.ai/server/@sidharthrajaram/mcp-sse)
+[![smithery badge](https://smithery.ai/badge/@SmartManoj/mcp-sse-weather)](https://smithery.ai/server/@SmartManoj/mcp-sse-weather)
 
 This demonstrates a working pattern for SSE-based MCP servers and standalone MCP clients that use tools from them. Based on an original discussion [here](https://github.com/modelcontextprotocol/python-sdk/issues/145).
 
