@@ -7,7 +7,7 @@ from contextlib import AsyncExitStack
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
-from anthropic import Anthropic
+from litellm import completion
 from dotenv import load_dotenv
 
 load_dotenv()  # load environment variables from .env
@@ -17,7 +17,7 @@ class MCPClient:
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
-        self.anthropic = Anthropic()
+        self.model = "gemini/gemini-2.5-flash"
 
     async def connect_to_sse_server(self, server_url: str):
         """Connect to an MCP server running with SSE transport"""
@@ -46,7 +46,7 @@ class MCPClient:
             await self._streams_context.__aexit__(None, None, None)
 
     async def process_query(self, query: str) -> str:
-        """Process a query using Claude and available tools"""
+        """Process a query using Gemini and available tools"""
         messages = [
             {
                 "role": "user",
@@ -56,56 +56,75 @@ class MCPClient:
 
         response = await self.session.list_tools()
         available_tools = [{ 
-            "name": tool.name,
-            "description": tool.description,
-            "input_schema": tool.inputSchema
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.inputSchema
+            }
         } for tool in response.tools]
 
-        # Initial Claude API call
-        response = self.anthropic.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1000,
-            messages=messages,
-            tools=available_tools
-        )
+        try:
+            # Initial Gemini API call
+            response = completion(
+                model=self.model,
+                messages=messages,
+                tools=available_tools,
+                max_tokens=1000
+            )
 
-        # Process response and handle tool calls
-        tool_results = []
-        final_text = []
+            # Process response and handle tool calls
+            tool_results = []
+            final_text = []
 
-        for content in response.content:
-            if content.type == 'text':
-                final_text.append(content.text)
-            elif content.type == 'tool_use':
-                tool_name = content.name
-                tool_args = content.input
+            for choice in response.choices:
+                message = choice.message
+                if message.content:
+                    final_text.append(message.content)
                 
-                # Execute tool call
-                result = await self.session.call_tool(tool_name, tool_args)
-                tool_results.append({"call": tool_name, "result": result})
-                final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
+                if hasattr(message, 'tool_calls') and message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        tool_name = tool_call.function.name
+                        tool_args = json.loads(tool_call.function.arguments)
+                        
+                        # Execute tool call
+                        result = await self.session.call_tool(tool_name, tool_args)
+                        tool_results.append({"call": tool_name, "result": result})
+                        final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
 
-                # Continue conversation with tool results
-                if hasattr(content, 'text') and content.text:
-                    messages.append({
-                    "role": "assistant",
-                    "content": content.text
-                    })
-                messages.append({
-                    "role": "user", 
-                    "content": result.content
-                })
+                        # Extract text content from MCP response
+                        tool_response_text = ""
+                        if hasattr(result, 'content') and result.content:
+                            if hasattr(result.content[0], 'text'):
+                                tool_response_text = result.content[0].text
+                            else:
+                                tool_response_text = str(result.content[0])
+                        else:
+                            tool_response_text = str(result.content)
 
-                # Get next response from Claude
-                response = self.anthropic.messages.create(
-                    model="claude-3-5-sonnet-20241022",
-                    max_tokens=1000,
-                    messages=messages,
-                )
+                        # Continue conversation with tool results (use plain text)
+                        messages.append({
+                            "role": "assistant",
+                            "content": message.content or ""
+                        })
+                        messages.append({
+                            "role": "user", 
+                            "content": tool_response_text
+                        })
 
-                final_text.append(response.content[0].text)
+                        # Get next response from Gemini
+                        response = completion(
+                            model=self.model,
+                            messages=messages,
+                            max_tokens=1000
+                        )
 
-        return "\n".join(final_text)
+                        if response.choices and response.choices[0].message.content:
+                            final_text.append(response.choices[0].message.content)
+
+            return "\n".join(final_text)
+        except Exception as e:
+            return f"Error processing query: {str(e)}"
     
 
     async def chat_loop(self):

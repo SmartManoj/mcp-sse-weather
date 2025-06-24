@@ -11,7 +11,7 @@ This demonstrates a working pattern for SSE-based MCP servers and standalone MCP
 ```
 uv run weather.py
 
-uv run client.py http://0.0.0.0:8080/sse
+uv run client.py http://localhost:8080/sse
 ```
 
 ```
